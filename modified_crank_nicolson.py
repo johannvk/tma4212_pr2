@@ -33,7 +33,6 @@ def one_dim_generate_step_matrices(m: int, r: float, Neumann_BC: Union[Tuple[flo
         # Adapting the first and last row to Neumann BC:
         Lap[0, 1] = 2.0
         Lap[m - 1, m - 2] = 2.0
-        print(f"First row of Lap: \t{Lap[0, :]}\nLast row of Lap: \t{Lap[m-1, :]}")
 
     r_half_Lap = (r / 2.0) * Lap
 
@@ -227,6 +226,6 @@ def test_one_dim_neumann():
 
 
 if __name__ == '__main__':
-    # test_one_dim_dirichlet()
+    test_one_dim_dirichlet()
     test_one_dim_neumann()
     # one_dim_diffusion_reaction_convergence()
