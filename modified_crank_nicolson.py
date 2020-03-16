@@ -17,7 +17,7 @@ def two_dim_laplacian(n: int):
 
 # Function to generate a discretized matrix approximation of the 1D-Laplacian:
 # With Dirichlet conditions and Natural ordering.
-def one_dim_sparse_laplacian(m):
+def one_dim_sparse_laplacian(m: int):
     return sp.diags([1.0, -2.0, 1.0], [-1, 0, 1], dtype='float64', shape=(m, m), format='lil')
 
 
@@ -96,6 +96,9 @@ def one_dim_reaction_diffusion_solver(u_init: np.ndarray, xs: np.ndarray, mu: fl
     """
     Solving on the domain x in (0, X) or x in (X[0], X[1])
     :param u_init: Initial vector-values for u(x, 0). u_init[0] and u_init[-1] used as Dirichlet boundary values.
+    :param xs: Discretization of solution domain.
+    :param mu: Diffusion coefficient.
+    :param f: Source term. f(x, t, u).
     :param N: Number of temporal discretization points.
     :param T: End time for solution.
     :param M: Number of spatial discretization points.
@@ -122,33 +125,29 @@ def one_dim_reaction_diffusion_solver(u_init: np.ndarray, xs: np.ndarray, mu: fl
     u_storage[0, :] = np.copy(u_init)
 
     for i in range(1, N):
-        u_init = one_dim_reaction_diffusion_step(u_init, xs, I_minus_Lap, I_plus_Lap, f, i, k, h, mu, Neumann_BC)
+        # Subtract 1 from i to start from time-step 0 (t_0), instead of time-step 1 (t_1).
+        u_init = one_dim_reaction_diffusion_step(u_init, xs, I_minus_Lap, I_plus_Lap, f, i-1, k, h, mu, Neumann_BC)
         u_storage[i, :] = np.copy(u_init)
 
     return u_storage
 
 
-def one_dim_diffusion_reaction_convergence():
-    M = 100
-    X, T = (0.0, 1.0), 1.0
-
+def one_dim_diffusion_reaction_convergence(u_exact: Callable, mu: float, f: Callable,
+                                           Neumann_BC : Union[None, Tuple[float, float]] = None,
+                                           M: int = 200, X : Tuple[float, float] = (0.0, 1.0), T: float = 1.0):
     xs = np.linspace(X[0], X[1], M)
-
-    def u_exact(x, t):
-        return np.exp(-np.pi**2*t)*np.sin(np.pi*x) - t*x*(1.0 - x)
-
     exact_solution_T = u_exact(xs, T)
 
-    u_init = np.sin(np.pi * xs)
-    mu = 1.0
-    f = lambda x, t, u: 1.0*(-x * (1.0 - x) - 2*t)
+    u_init = u_exact(xs, 0.0)
 
     Ns = np.logspace(1.0, 2.2, 10, dtype=int)
     sup_errors = np.zeros(len(Ns))
+
     for i, N in enumerate(Ns):
-        solution_array = one_dim_reaction_diffusion_solver(u_init, xs, mu, f, N=N, T=T, M=M, X=X)
+        solution_array = one_dim_reaction_diffusion_solver(u_init, xs, mu, f, N=N, T=T, M=M, X=X, Neumann_BC=Neumann_BC)
         sup_errors[i] = np.max(np.abs(exact_solution_T - solution_array[-1, :]))
 
+    print(f"Sup-errors: {sup_errors}\n")
     Ns -= 1  # To get the precise value of 'h' when taking the reciprocal.
     log_log_slope = linregress(np.log10(1/Ns), np.log10(sup_errors))[0]
 
@@ -158,8 +157,16 @@ def one_dim_diffusion_reaction_convergence():
     ax.set_xlabel("log(h = 1/N)")
     ax.set_ylabel("log(Sup|u_ex - u_num|)")
     ax.legend(loc="best")
-
     plt.show()
+
+
+def one_dim_dirichlet_convergence():
+    def u_exact(x, t):
+        return np.exp(-np.pi**2*t)*np.sin(np.pi*x) - t*x*(1.0 - x)
+    mu = 1.0
+    f = lambda x, t, u: 1.0*(-x * (1.0 - x) - 2*t)
+
+    one_dim_diffusion_reaction_convergence(u_exact=u_exact, mu=mu, f=f)
 
 
 def test_one_dim_dirichlet():
@@ -192,16 +199,25 @@ def test_one_dim_dirichlet():
     plt.show()
 
 
+def one_dim_neumann_convergence():
+    def u_exact(x, t):
+        return t**3 + x*(1-x)
+
+    def f(x, t, u): return 3*t**2 + 1.0
+    mu = 0.5
+
+    one_dim_diffusion_reaction_convergence(u_exact, mu, f, Neumann_BC=(1.0, -1.0))
+
+
 def test_one_dim_neumann():
 
     def u_exact(x, t):
-        return t + x*(1-x)
+        return t**3 + x*(1-x)
 
-    def f(*args): return 2.0
+    def f(x, t, u): return 3*t**2 + 1.0
 
-
-    M, N = 150, 2
-    X, T = (0.0, 1.0), 2.0
+    M, N = 200, 25
+    X, T = (0.0, 1.0), 1.0
 
     mu = 0.5
     xs = np.linspace(X[0], X[1], M)
@@ -218,7 +234,7 @@ def test_one_dim_neumann():
     fig, axis = plt.subplots(1, 1)
 
     axis.plot(xs, solution_array[-1, :], label="U_num", alpha=0.8)
-    axis.plot(xs, exact_solution_T, label="U_exact", alpha=0.5)
+    axis.plot(xs, exact_solution_T, label="U_exact", alpha=0.8)
 
     axis.legend(loc="best")
     axis.set_xlim(X)
@@ -226,6 +242,8 @@ def test_one_dim_neumann():
 
 
 if __name__ == '__main__':
-    test_one_dim_dirichlet()
+    # one_dim_dirichlet_convergence()
+    # test_one_dim_dirichlet()
+
+    one_dim_neumann_convergence()
     test_one_dim_neumann()
-    # one_dim_diffusion_reaction_convergence()
