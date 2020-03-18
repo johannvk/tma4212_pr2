@@ -44,5 +44,9 @@ def SIR_ode_epidemic():
     plt.show()
 
 
+class SIR_SOLVER:
+    pass
+
+
 if __name__ == '__main__':
     SIR_ode_epidemic()
