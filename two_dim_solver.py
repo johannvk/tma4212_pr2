@@ -12,6 +12,35 @@ from matplotlib import cm
 from typing import Union, Callable, Tuple, Iterable
 
 
+def two_dim_average_corners(M: int, format: str = 'coo', dtype: str = 'float64', corners=None):
+    """
+    Building the discretized Laplacian in two dimensions with block matrix sparse tools.
+    Built in Neumann boundary conditions. Need compensation for this in the solver-step.
+    :param M: Number of spatial discretization points in each spatial dimension.
+    :param format: Storage format for the sparse matrices.
+    :param dtype: Data type in the sparse matrices.
+    :param corners: Corner indexes, in natural order.
+    :return: Discretized two dimensional Laplacian, with Neumann boundary conditions.
+    """
+    inner_data = [[1.0] * (M - 2) + [2.0], -4.0, [2.0] + [1.0] * (M - 2)]
+    inner_diag = sp.diags(inner_data, offsets=[-1, 0, 1], format=format, dtype=dtype)
+    I_m = sp.identity(M, format=format, dtype=dtype)
+
+    # Rows of matrices:
+    # Initializing with the top row:
+    rows = [[inner_diag, 2*I_m] + (M - 2) * [None]]
+
+    # Adding the middle rows (1, m-2):
+    for i in range(1, M - 1):
+        row = [None] * M
+        row[i-1:i+2] = I_m, inner_diag, I_m
+        rows.append(row)
+
+    # Adding the bottom row:
+    rows.append((M - 2) * [None] + [2 * I_m, inner_diag])
+    return sp.bmat(rows, format=format, dtype=dtype)
+
+
 def two_dim_laplace_neumann(M: int, format: str = 'coo', dtype: str = 'float64'):
     """
     Building the discretized Laplacian in two dimensions with block matrix sparse tools.
@@ -86,7 +115,6 @@ class DiffusionReactionSolver2D:
         # Retaining the Reaction function and Diffusion coefficient within the Class:
         self.f = np.vectorize(f)
         self.mu = mu
-        self.mu_k_h = (self.mu, self.k, self.h)  # Can be removed later.
 
         # Getting the composite diffusion/step-size parameter r:
         self.r = self.mu * self.k / (self.h**2)
@@ -129,7 +157,6 @@ class DiffusionReactionSolver2D:
         :param f: Reaction term. Callable function as a function of (x, y, t, u).
         :param bc_funcs: Boundary condition functions. Ordered {East: 0, North: 1, West: 2, South: 3}.
                          Also have to accept the arguments as (x, y, t, u).
-        :param mu_k_h: Tuple storing (mu, k, h). Diffusion coefficient, step size in time and space respectively.
         :return: (M*M,)-np.ndarray Right-hand-side vector used for the Implicit solve.
         """
         #  Reshape u_n to appropriate dimensions:
@@ -144,10 +171,10 @@ class DiffusionReactionSolver2D:
         for i, boundary in enumerate(self.boundaries):
             f_vec[boundary] += mult_bc * self.Neumann_BC[i](self.X[boundary], self.Y[boundary], t_n, u_n[boundary])
 
-        # WhaT if we treat the corners as simply lying on the x-axis?
-        # Handle the corner cases: Not working perfectly. Would like to average out the two nearest points.
         corners = [(self.M - 1, self.M - 1), (0, self.M - 1), (0, 0), (self.M - 1, 0)]
-        mult_corner = np.sqrt(2.0) * self.mu * self.k / self.h
+
+        # This 2.0 was earlier sqrt(2.0) because I thought that was better. I was REALLY WRONG!
+        mult_corner = 2.0 * self.mu * self.k / self.h
 
         for i, (xi, yi) in enumerate(corners):
             f_vec[xi, yi] += mult_corner * (self.Neumann_BC[i](self.X[xi, yi], self.Y[xi, yi], t_n, u_n[xi, yi]) +
@@ -175,116 +202,6 @@ class DiffusionReactionSolver2D:
             self.u_storage[n + 1, :, :] = np.copy(u_n.reshape(self.M, self.M, order='C'))
 
         return self.u_storage
-
-
-# def generate_right_side_vector(U_n: np.ndarray, M: int, n: int, X: np.ndarray, Y: np.ndarray, I_plus_Lap: np.ndarray,
-#                                f: Callable, bc_funcs: Tuple[Callable, Callable, Callable, Callable],
-#                                mu_k_h: Tuple[float, float, float]):
-#     """
-#     Generating the right-hand-side vector for the Implicit solve in the Diffusion-reaction scheme.
-#     :param U_n: Current solution at timestep n, an (M*M,)-np.ndarray.
-#     :param M: Number of spatial discretization points in each spatial dimension.
-#     :param n: Current time step. From 0 to N-1.
-#     :param X: (M, M)-np.ndarray storing the X-values for the domain in a meshgrid-format.
-#     :param Y: (M, M)-np.ndarray storing the Y-values for the domain in a meshgrid-format.
-#     :param I_plus_Lap: Right hand side explicit part of the diffusion step.
-#     :param f: Reaction term. Callable function as a function of (x, y, t, u).
-#     :param bc_funcs: Boundary condition functions. Ordered {East: 0, North: 1, West: 2, South: 3}.
-#                      Also have to accept the arguments as (x, y, t, u).
-#     :param mu_k_h: Tuple storing (mu, k, h). Diffusion coefficient, step size in time and space respectively.
-#     :return: (M*M,)-np.ndarray Right-hand-side vector used for the Implicit solve.
-#     """
-#     #  Think that U_n is passed around as a long ass 1D-array.
-#     U_n = U_n.reshape((M, M), order='C')
-#     mu, k, h = mu_k_h
-#     t_n = n*k
-#
-#     # Boolean masks for boundary indices: East: 0, North: 1, West: 2, South: 3.
-#     boundaries = [np.full((M, M), False, dtype=bool), np.full((M, M), False, dtype=bool),
-#                   np.full((M, M), False, dtype=bool), np.full((M, M), False, dtype=bool)]
-#
-#     boundaries[0][1:M - 1, M - 1] = True  # Eastern boundary.
-#     boundaries[1][M - 1, 1:M - 1] = True  # Northern boundary.
-#     boundaries[2][1:M - 1, 0] = True  # Western boundary.
-#     boundaries[3][0, 1:M - 1] = True  # Southern boundary.
-#
-#     # Initializing the right-hand-side vector:
-#     f_vec = k*f(X, Y, t_n, U_n)
-#     mult_bc = (2*mu*k/h)
-#     for i, boundary in enumerate(boundaries):
-#         f_vec[boundary] += mult_bc*bc_funcs[i](X[boundary], Y[boundary], t_n, U_n[boundary])
-#
-#     # WhaT if we treat the corners as simply lying on the x-axis?
-#     # Handle the corner cases: Not working perfectly. Would like to average out the two nearest points.
-#     corners = [(M-1, M-1), (0, M-1), (0, 0), (M-1, 0)]
-#     mult_corner = np.sqrt(2.0)*mu*k/h
-#     for i, (xi, yi) in enumerate(corners):
-#         f_vec[xi, yi] += mult_corner*(bc_funcs[i](X[xi, yi], Y[xi, yi], t_n, U_n[xi, yi]) +
-#                                       bc_funcs[(i+1) % 4](X[xi, yi], Y[xi, yi], t_n, U_n[xi, yi]))
-#
-#     ret_value = I_plus_Lap.dot(U_n.ravel(order='C')) + f_vec.ravel(order='C')
-#     return ret_value
-#
-#
-# def two_dim_reaction_diffusion_step(U_n, I_minus_Lap: Callable, rhs: np.ndarray, X, Y,
-#                                     f: Callable, time_step: int, k: float, M: int):
-#     t_n = time_step*k
-#     U_star = I_minus_Lap(rhs)
-#
-#     f_vec = f(X, Y, t_n, U_n.reshape(M, M, order='C')).ravel(order='C')
-#     f_vec_star = f(X, Y, t_n + k, U_star.reshape(M, M, order='C')).ravel(order='C')
-#
-#     return U_star + (k/2.0)*(f_vec_star - f_vec)
-#
-#
-# def two_dim_reaction_diffusion_solver(u_init: np.ndarray, domain: Tuple[np.ndarray, np.ndarray], mu: float, f: Callable,
-#                                       N: int, T: float = 1.0, Neumann_BC=None):
-#     """
-#
-#     :param u_init: Initial Values for the distribution, in (M, M)-np.ndarray.
-#     :param domain:
-#     :param mu:
-#     :param f:
-#     :param N:
-#     :param T:
-#     :param Neumann_BC:
-#     :return:
-#     """
-#     # Need the step sizes in both spatial dimensions to be equal.
-#     assert np.max(domain[0]) == np.max(domain[1])
-#     assert np.min(domain[0]) == np.min(domain[1])
-#
-#     # Need a square domain, with equal number of points in each spatial dimension.
-#     assert u_init.shape[0] == u_init.shape[1]
-#
-#     if Neumann_BC is None:  # No boundary conditions supplied, assumes zero derivatives at the boundaries.
-#         Neumann_BC = [lambda *args: 0.0] * 4
-#
-#     M = u_init.shape[0]
-#
-#     X, Y = domain
-#     h = (np.max(domain[0]) - np.min(domain[0]))/(M - 1)
-#     k = (T - 0.0) / (N - 1)
-#     mu_k_h = (mu, k, h)
-#
-#     r = mu*k/(h*h)
-#     I_minus_Lap, I_plus_Lap = generate_two_dim_step_matrices(M, r)
-#
-#     u_storage = np.zeros((N, M, M), dtype='float64')
-#     u_storage[0, :, :] = np.copy(u_init)
-#
-#     u_n = np.copy(u_init).ravel(order='C')
-#     for n in range(0, N-1):
-#
-#         # Prepare the right hand side vector:
-#         rhs = generate_right_side_vector(u_n, M, n, X, Y, I_plus_Lap, f, Neumann_BC, mu_k_h)
-#         u_n = two_dim_reaction_diffusion_step(u_n, I_minus_Lap, rhs, X, Y, f, n, k, M)
-#
-#         u_storage[n+1, :, :] = np.copy(u_n.reshape(M, M, order='C'))
-#
-#     return u_storage
-
-# TODO: SETT ALT INN I EN "Solver Class".
 
 
 # def two_dim_test():
@@ -330,17 +247,61 @@ class DiffusionReactionSolver2D:
 #     # ax.set_zlim(0.0, 1.0)
 #
 #     plt.show()
-#
-#     pass
+
+
+def test_1():
+    print("Test 1:")
+    L, T = 3.0, 1.0
+    M, N = 100, 100
+    xs, ys = np.linspace(0.0, L, M), np.linspace(0.0, L, M)
+    X, Y = np.meshgrid(xs, ys)
+
+    def u_exact(x, y, t):
+        return t**3 + 2*y*(L - y) + x*(L - x)
+
+    mu = 1.0
+
+    def f(x, y, t, u):
+        return 3*t**2 - mu*(-6)
+
+    u_init = u_exact(X, Y, 0.0)
+    bc_funcs = [lambda *args: -L, lambda *args: -2*L, lambda *args: -L, lambda *args: -2*L]
+
+    solver = DiffusionReactionSolver2D(u_init, (X, Y), mu, f, N, T, bc_funcs)
+    u_num = solver.execute()
+
+    u_test = u_exact(X, Y, T)
+    f_test = f(X, Y, 0.0, T)
+
+    fig = plt.figure()
+    fig.suptitle("Numerical solution, t=T.")
+    ax = fig.gca(projection='3d')
+
+    ax.plot_surface(X, Y, u_test, cmap=cm.plasma, alpha=0.9)  # Surface-plot
+    ax.plot_surface(X, Y, u_num[-1, :, :], cmap=cm.coolwarm, alpha=0.9)  # Surface-plot
+    # ax.plot_surface(X, Y, f_test, cmap=cm.plasma, alpha=0.5)  # Surface-plot
+
+    errors = np.abs(u_test - u_num[-1, :, :])
+    sup_error = np.max(errors)
+    sup_error_loc = np.unravel_index(np.argmax(errors), errors.shape)
+    print(f"The position with the sup-error is: {sup_error_loc}")
+    print(f"Then sup-error is: {sup_error:.3e}")
+
+    plt.xlabel('x', fontsize=12)
+    plt.ylabel('y', fontsize=12)
+    ax.set_zlabel("$U_{i, j}$", fontsize=12)
+    # ax.set_zlim(0.0, 1.0)
+    ax.legend()
+    plt.show()
 
 
 def test_2():
 
     L, T = 1.0, 2.0
-    M, N = 50, 100
+    M, N = 100, 100
 
     def u_exact(x, y, t):
-        return t ** 3 + y * (1 - y)
+        return t ** 3 + x * (1 - x)
 
     def f(x, y, t, u):
         return 3 * t ** 2 + 1.0
@@ -351,31 +312,40 @@ def test_2():
     u_init = u_exact(X, Y, 0.0)
 
     def BC_E(x, y, t, u):
-        return 0.0
+        return -1.0
 
     def BC_N(x, y, t, u):
-        return -1.0
-
-    def BC_W(x, y, t, u):
         return 0.0
 
-    def BC_S(x, y, t, u):
+    def BC_W(x, y, t, u):
         return -1.0
+
+    def BC_S(x, y, t, u):
+        return 0.0
 
     boundary_funcs = [np.vectorize(func) for func in (BC_E, BC_N, BC_W, BC_S)]
     solver = DiffusionReactionSolver2D(u_init, (X, Y), mu, f, N, T, boundary_funcs)
 
-    U_final = solver.execute()
+    u_num = solver.execute()
 
     u_test = u_exact(X, Y, T)
     f_test = f(X, Y, 0.0, T)
+
+    errors = np.abs(u_test - u_num[-1, :, :])
+    sup_error = np.max(errors)
+    sup_error_loc = np.unravel_index(np.argmax(errors), errors.shape)
+    print(f"The position with the sup-error is: {sup_error_loc}")
+    print(f"Then sup-error is: {sup_error:.3e}")
 
     fig = plt.figure()
     fig.suptitle("Numerical solution, t=T.")
     ax = fig.gca(projection='3d')
 
-    # ax.plot_surface(X, Y, u_test, cmap=cm.coolwarm)  # Surface-plot
-    ax.plot_surface(X, Y, U_final[-1, :, :], cmap=cm.coolwarm, alpha=0.9)  # Surface-plot
+    ax.plot_surface(X, Y, u_test, cmap=cm.plasma, alpha=0.5)  # Surface-plot
+    ax.plot_surface(X, Y, u_num[-1, :, :], cmap=cm.coolwarm, alpha=0.5)  # Surface-plot
+
+    sup_error = np.max(np.abs(u_test - u_num[-1, :, :]))
+    print(f"Then sup-error is: {sup_error:.3e}")
     # ax.plot_surface(X, Y, f_test, cmap=cm.plasma, alpha=0.5)  # Surface-plot
 
     plt.xlabel('x', fontsize=12)
@@ -390,7 +360,8 @@ def test_2():
 
 if __name__ == '__main__':
     # two_dim_test()
-    test_2()
+    test_1()
+    # test_2()
 
 # two_dim_step_matrices(4, 0.2)
 # two_dim_laplace_neumann(4)
