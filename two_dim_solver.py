@@ -42,8 +42,8 @@ def two_dim_laplace_neumann(M: int, format: str = 'coo', dtype: str = 'float64')
 
 class DiffusionReactionSolver2D:
 
-    def __init__(self, u_init: np.ndarray, domain: Tuple[np.ndarray, np.ndarray], f: Union[Callable, np.ndarray],
-                 mu: float, N: int, T: float = 1.0, Neumann_BC = None, *args):
+    def __init__(self, u_init: np.ndarray, domain: Tuple[np.ndarray, np.ndarray], f: Union[Callable, None] = None,
+                 mu: float = 1.0, N: int = 100, T: float = 1.0, Neumann_BC = None, *args):
         """
         Initializer function for
         :param u_init: Initial Values for the distribution, in (M, M)-np.ndarray.
@@ -64,7 +64,7 @@ class DiffusionReactionSolver2D:
         assert u_init.shape[0] == u_init.shape[1]
 
         if Neumann_BC is None:  # No boundary conditions supplied, assumes zero derivatives at the boundaries.
-            self.Neumann_BC = [np.vectoirize(lambda *args: 0.0)] * 4
+            self.Neumann_BC = [np.vectorize(lambda *args: 0.0)] * 4
         else:
             self.Neumann_BC = [np.vectorize(func) for func in Neumann_BC]
 
@@ -78,9 +78,12 @@ class DiffusionReactionSolver2D:
         # Domain stored in a np.meshgrid format.
         self.X, self.Y = domain
 
+        # Retaining an (M, M)-np.ndarray for access to current values of u at timestep n.
+        self.u_n = np.copy(u_init)
+
         # Storing the initial state of the function, and making storage for the steps taken.
-        self.u_init = u_init
         self.u_storage = np.zeros((self.N, self.M, self.M), dtype='float64')
+        self.u_storage[0, :, :] = np.copy(u_init)
 
         # Step size in space and time respectively:
         self.h = (np.max(domain[0]) - np.min(domain[0])) / (self.M - 1)
@@ -90,8 +93,7 @@ class DiffusionReactionSolver2D:
         if callable(f):
             self.f = np.vectorize(lambda x, y, t, u: f(x, y, t, u, *args))
         else:
-            # Lurer på hvordan implementere at f er et array, og ikke en funksjon.
-            pass
+            self.f = np.vectorize(lambda *args: 0.0)
 
         self.mu = mu
 
@@ -108,6 +110,7 @@ class DiffusionReactionSolver2D:
         self.boundaries[1][self.M - 1, 1:self.M - 1] = True  # Northern boundary.
         self.boundaries[2][1:self.M - 1, 0] = True  # Western boundary.
         self.boundaries[3][0, 1:self.M - 1] = True  # Southern boundary.
+        self.corners = [(self.M - 1, self.M - 1), (0, self.M - 1), (0, 0), (self.M - 1, 0)]
 
     def generate_two_dim_step_matrices(self):
         """
@@ -124,10 +127,19 @@ class DiffusionReactionSolver2D:
 
         return I_minus_Lap, I_plus_Lap
 
-    def generate_right_side_vector(self, u_n: np.ndarray, n: int):
+    def generate_reaction_vector(self, u: np.ndarray, n: int):
+        """
+        Function to generate the reaction term vector.
+        :param u: (M, M)-np.ndarray. Current values of solution at time step n.
+        :param n: Time step.
+        :return: (M, M)-np.ndarray with k*f(x, y, t, u).
+        """
+        return self.f(self.X, self.Y, n*self.k, u)
+
+    def generate_right_side_vector(self, n: int):
         """
         Generating the right-hand-side vector for the Implicit solve in the Diffusion-reaction scheme.
-        :param u_n: Current solution at timestep n, an (M*M,)-np.ndarray.
+        :param u_n: Current solution at timestep n, an (M, M)-np.ndarray.
         :param M: Number of spatial discretization points in each spatial dimension.
         :param n: Current time step. From 0 to N-1.
         :param X: (M, M)-np.ndarray storing the X-values for the domain in a meshgrid-format.
@@ -138,45 +150,40 @@ class DiffusionReactionSolver2D:
                          Also have to accept the arguments as (x, y, t, u).
         :return: (M*M,)-np.ndarray Right-hand-side vector used for the Implicit solve.
         """
-        #  Reshape u_n to appropriate dimensions:
-        if u_n.shape is not (self.M, self.M):
-            u_n = u_n.reshape((self.M, self.M), order='C')
+        # Initializing the right-hand-side vector:
+        f_vec = self.k * self.generate_reaction_vector(self.u_n, n)
+
+        # Current time:
         t_n = n * self.k
 
-        # Initializing the right-hand-side vector:
-        f_vec = self.k * self.f(self.X, self.Y, t_n, u_n)
+        # Boundary condition multiplier:
+        mult_bc = 2 * self.mu * self.k / self.h
 
         # Boolean masks for boundary indices: East: 0, North: 1, West: 2, South: 3.
-        mult_bc = 2 * self.mu * self.k / self.h
         for i, boundary in enumerate(self.boundaries):
-            f_vec[boundary] += mult_bc * self.Neumann_BC[i](self.X[boundary], self.Y[boundary], t_n, u_n[boundary])
+            f_vec[boundary] += mult_bc * self.Neumann_BC[i](self.X[boundary], self.Y[boundary], t_n, self.u_n[boundary])
 
-        corners = [(self.M - 1, self.M - 1), (0, self.M - 1), (0, 0), (self.M - 1, 0)]
+        for i, (xi, yi) in enumerate(self.corners):
+            corner_i = self.Neumann_BC[i](self.X[xi, yi], self.Y[xi, yi], t_n, self.u_n[xi, yi])
+            corner_i_plus_1 = self.Neumann_BC[(i + 1) % 4](self.X[xi, yi], self.Y[xi, yi], t_n, self.u_n[xi, yi])
+            f_vec[xi, yi] += mult_bc * (corner_i + corner_i_plus_1)
 
-        for i, (xi, yi) in enumerate(corners):
-            f_vec[xi, yi] += mult_bc * (self.Neumann_BC[i](self.X[xi, yi], self.Y[xi, yi], t_n, u_n[xi, yi]) +
-                                            self.Neumann_BC[(i + 1) % 4](self.X[xi, yi], self.Y[xi, yi], t_n, u_n[xi, yi]))
+        return self.I_plus_Lap.dot(self.u_n.ravel(order='C')) + f_vec.ravel(order='C')
 
-        return self.I_plus_Lap.dot(u_n.ravel(order='C')) + f_vec.ravel(order='C')
+    def two_dim_reaction_diffusion_step(self, n: int):
+        # Prepare the right hand side vector:
+        rhs = self.generate_right_side_vector(n)  # .ravel(order='C')
+        u_star = self.I_minus_Lap(rhs).reshape((self.M, self.M), order='C')
 
-    def two_dim_reaction_diffusion_step(self, u_n: np.ndarray, n: int, rhs: np.ndarray):
-        t_n = n * self.k
-        u_star = self.I_minus_Lap(rhs)
-
-        f_vec = self.f(self.X, self.Y, t_n, u_n.reshape((self.M, self.M), order='C')).ravel(order='C')
-        f_vec_star = self.f(self.X, self.Y, t_n + self.k, u_star.reshape(self.M, self.M, order='C')).ravel(order='C')
+        f_vec = self.generate_reaction_vector(self.u_n, n)
+        f_vec_star = self.generate_reaction_vector(u_star, n + 1)
 
         return u_star + (self.k / 2.0) * (f_vec_star - f_vec)
 
     def execute(self):
-        self.u_storage[0, :, :] = np.copy(self.u_init)
-        u_n = np.copy(self.u_init).ravel(order='C')
         for n in range(0, self.N - 1):
-            # Prepare the right hand side vector:
-            rhs = self.generate_right_side_vector(u_n, n)
-            u_n = self.two_dim_reaction_diffusion_step(u_n, n, rhs)
-
-            self.u_storage[n + 1, :, :] = np.copy(u_n.reshape(self.M, self.M, order='C'))
+            self.u_n = self.two_dim_reaction_diffusion_step(n)
+            self.u_storage[n + 1, :, :] = np.copy(self.u_n)  # .reshape(self.M, self.M, order='C'))
 
         return self.u_storage
 
@@ -242,9 +249,9 @@ def test_1():
         return 3*t**2 - mu*(-6)
 
     u_init = u_exact(X, Y, 0.0)
-    bc_funcs = [lambda *args: -L, lambda *args: -2*L, lambda *args: -L, lambda *args: -2*L]
+    bc_funcs = [lambda *args: -L, lambda *args: -2.00*L, lambda *args: -L, lambda *args: -2*L]
 
-    solver = DiffusionReactionSolver2D(u_init, (X, Y), mu, f, N, T, bc_funcs)
+    solver = DiffusionReactionSolver2D(u_init, (X, Y), f, mu, N, T, bc_funcs)
     u_num = solver.execute()
 
     u_test = u_exact(X, Y, T)
