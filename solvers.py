@@ -12,6 +12,125 @@ from matplotlib import cm
 from typing import Union, Callable, Tuple, Iterable
 
 
+def one_dim_sparse_laplacian(m: int):
+    return sp.diags([1.0, -2.0, 1.0], [-1, 0, 1], dtype='float64', shape=(m, m), format='lil')
+
+
+class DiffusionReactionSolver1D:
+
+    def __init__(self, u_init: np.ndarray, xs: np.ndarray, mu: float, f: Callable, N: int, T: float = 1.0,
+                 X: Union[float, Tuple[float, float]] = 1.0, Neumann_BC: Union[Tuple[float, float], None] = None):
+        """
+        Solving on the domain x in (0, X) or x in (X[0], X[1])
+        :param u_init: Initial vector-values for u(x, 0). u_init[0] and u_init[-1] used as Dirichlet boundary values.
+        :param xs: Discretization of solution domain.
+        :param mu: Diffusion coefficient.
+        :param f: Source term. f(x, t, u).
+        :param N: Number of temporal discretization points.
+        :param T: End time for solution.
+        :param M: Number of spatial discretization points.
+        :param X: End point in space for solution. Assumed start at x=0 unless otherwise specified.
+        :param Neumann_BC: Variable indicating whether or not to use Neumann boundary conditions.
+        :return: (N, M)-np.ndarray storing the solution at every time- and space-point.
+        """
+
+        # Storing domain specifications:
+        self.M = len(u_init)
+        self.xs = xs
+        if isinstance(X, float):
+            self.h = (X - 0.0)/(self.M-1)
+        else:
+            self.h = (X[1] - X[0])/(self.M-1)
+
+        self.N = N
+        self.T = T
+        self.k = (self.T - 0.0)/(self.N-1)
+
+        # Storing problem specifications:
+        self.mu = mu
+        self.f = np.vectorize(f)
+        self.Neumann_BC = Neumann_BC
+        self.mu = mu
+        self.r = self.mu*self.k/(self.h*self.h)
+
+        # Generating step matrices:
+        self.I_minus_Lap, self.I_plus_Lap = self.one_dim_generate_step_matrices()
+
+        self.u_n = np.copy(u_init)
+        self.u_storage = np.zeros((self.N, self.M), dtype='float64')
+        self.u_storage[0, :] = np.copy(u_init)
+
+    def one_dim_generate_step_matrices(self):
+        # Discretized Laplacian in one dimension:
+        Lap = one_dim_sparse_laplacian(self.M)
+
+        if self.Neumann_BC is None:
+            # Adapting the first and last row to Neumann BC:
+            Lap[0, [0, 1]] = [0.0, 0.0]
+            Lap[self.M - 1, [self.M - 2, self.M - 1]] = [0.0, 0.0]
+        else:
+            # Adapting the first and last row to Neumann BC:
+            Lap[0, 1] = 2.0
+            Lap[self.M - 1, self.M - 2] = 2.0
+
+        r_half_Lap = (self.r / 2.0) * Lap
+
+        # Find the LU-factorized version of the left-side matrix in Crank-Nicolson. Returns a callable:
+        I_minus_r_Lap = spla.factorized((sp.identity(self.M, dtype='float64', format='lil') - r_half_Lap).tocsc())
+        I_plus_r_Lap = (sp.identity(self.M, dtype='float64', format='lil') + r_half_Lap).tocsc()  # Turn into csc!
+
+        return I_minus_r_Lap, I_plus_r_Lap
+
+    def one_dim_reaction_diffusion_step(self, u: np.ndarray, n: int):
+        """
+        Function returning a time step for u^(n). First find solution u_star to
+        (I_minus_Lap)*u_star = (I_plus_Lap)*u + k*f(u). Then return u_star + (k/2.0)*(f(xs, u_star) - f(xs, u)).
+        :param u: Current vector-represented function, u^(n), before a step is taken.
+        :param I_minus_Lap: Left-side matrix, in LU-factorized callable format.
+        :param I_plus_Lap: Right-side matrix, in sparse format.
+        :param f: Reaction/Source term.
+        :param n: Which time step we are on.
+        :param k: Step size in time.
+        :param h: Step size in space.
+        :param mu: Diffusion constant.
+        :return: Next step, u^(n+1).
+        """
+        t = n * self.k
+
+        # Create the initial source vector:
+        f_vec = np.array([self.f(self.xs[j], t, u[j]) for j in range(self.M)], dtype='float64')
+
+        if self.Neumann_BC is None:
+            f_vec[0] = 0.0
+            f_vec[-1] = 0.0
+            right_side_vector = self.I_plus_Lap.dot(u) + self.k * f_vec
+        else:
+            r_h = self.mu * self.k / self.h
+            right_side_vector = self.I_plus_Lap.dot(u) + self.k * f_vec
+            right_side_vector[0] -= 2 * r_h * self.Neumann_BC[0]
+            right_side_vector[-1] += 2 * r_h * self.Neumann_BC[1]
+
+        # Solves the linear system Ax = b, by calling I_minus_Lap(right_side_vector)
+        u_star = self.I_minus_Lap(right_side_vector)
+
+        # Create the intermediate source vector:
+        f_vec_star = np.array([self.f(self.xs[j], t + self.k, u_star[j]) for j in range(self.M)], dtype='float64')
+
+        if self.Neumann_BC is None:
+            f_vec_star[0] = 0.0
+            f_vec_star[-1] = 0.0
+
+        return u_star + (self.k / 2.0) * (f_vec_star - f_vec)
+
+    def execute(self):
+        for n in range(0, self.N-1):
+            # Subtract 1 from i to start from time-step 0 (t_0), instead of time-step 1 (t_1).
+            self.u_n = self.one_dim_reaction_diffusion_step(self.u_n, n)
+            self.u_storage[n+1, :] = np.copy(self.u_n)
+
+        return self.u_storage
+
+
 def two_dim_laplace_neumann(M: int, format: str = 'coo', dtype: str = 'float64'):
     """
     Building the discretized Laplacian in two dimensions with block matrix sparse tools.
@@ -38,10 +157,6 @@ def two_dim_laplace_neumann(M: int, format: str = 'coo', dtype: str = 'float64')
     # Adding the bottom row:
     rows.append((M - 2) * [None] + [2 * I_m, inner_diag])
     return sp.bmat(rows, format=format, dtype=dtype)
-
-
-class DiffusionReactionSolver1D:
-    pass
 
 
 class DiffusionReactionSolver2D:
