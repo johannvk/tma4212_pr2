@@ -13,7 +13,40 @@ from typing import Union, Callable, Tuple, Iterable
 
 
 def one_dim_sparse_laplacian(m: int):
+    """
+    Function to generate a discretized matrix approximation of the 1D-Laplacian.
+    :param m: Dimension of the square matrix.
+    :return: An (m, m) sparse matrix.
+    """
     return sp.diags([1.0, -2.0, 1.0], [-1, 0, 1], dtype='float64', shape=(m, m), format='lil')
+
+
+def two_dim_sparse_neumann_laplacian(M: int, format: str = 'coo', dtype: str = 'float64'):
+    """
+    Building the discretized Laplacian with Neumann boundary conditions in two dimensions
+    with block matrix sparse tools. Need specification for this in the solver-step.
+    :param M: Number of spatial discretization points in each spatial dimension.
+    :param format: Storage format for the sparse matrices.
+    :param dtype: Data type in the sparse matrices.
+    :return: Discretized two dimensional Laplacian, with Neumann boundary conditions.
+    """
+    inner_data = [[1.0] * (M - 2) + [2.0], -4.0, [2.0] + [1.0] * (M - 2)]
+    inner_diag = sp.diags(inner_data, offsets=[-1, 0, 1], format=format, dtype=dtype)
+    I_m = sp.identity(M, format=format, dtype=dtype)
+
+    # Rows of matrices.
+    # Initializing with the top row:
+    rows = [[inner_diag, 2*I_m] + (M - 2) * [None]]
+
+    # Adding the middle rows (1, m-2):
+    for i in range(1, M - 1):
+        row = [None] * M
+        row[i-1:i+2] = I_m, inner_diag, I_m
+        rows.append(row)
+
+    # Adding the bottom row:
+    rows.append((M - 2) * [None] + [2 * I_m, inner_diag])
+    return sp.bmat(rows, format=format, dtype=dtype)
 
 
 class DiffusionReactionSolver1D:
@@ -28,13 +61,10 @@ class DiffusionReactionSolver1D:
         :param f: Source term. f(x, t, u).
         :param N: Number of temporal discretization points.
         :param T: End time for solution.
-        :param M: Number of spatial discretization points.
         :param X: End point in space for solution. Assumed start at x=0 unless otherwise specified.
         :param Neumann_BC: Variable indicating whether or not to use Neumann boundary conditions.
-        :return: (N, M)-np.ndarray storing the solution at every time- and space-point.
         """
-
-        # Storing domain specifications:
+        # Storing spatial domain specifications:
         self.M = len(u_init)
         self.xs = xs
         if isinstance(X, float):
@@ -42,6 +72,7 @@ class DiffusionReactionSolver1D:
         else:
             self.h = (X[1] - X[0])/(self.M-1)
 
+        # Storing temporal domain specifications:
         self.N = N
         self.T = T
         self.k = (self.T - 0.0)/(self.N-1)
@@ -56,6 +87,7 @@ class DiffusionReactionSolver1D:
         # Generating step matrices:
         self.I_minus_Lap, self.I_plus_Lap = self.one_dim_generate_step_matrices()
 
+        # Preparing storage of the solution:
         self.u_n = np.copy(u_init)
         self.u_storage = np.zeros((self.N, self.M), dtype='float64')
         self.u_storage[0, :] = np.copy(u_init)
@@ -77,7 +109,7 @@ class DiffusionReactionSolver1D:
 
         # Find the LU-factorized version of the left-side matrix in Crank-Nicolson. Returns a callable:
         I_minus_r_Lap = spla.factorized((sp.identity(self.M, dtype='float64', format='lil') - r_half_Lap).tocsc())
-        I_plus_r_Lap = (sp.identity(self.M, dtype='float64', format='lil') + r_half_Lap).tocsc()  # Turn into csc!
+        I_plus_r_Lap = (sp.identity(self.M, dtype='float64', format='lil') + r_half_Lap).tocsc()  # Turn into csc
 
         return I_minus_r_Lap, I_plus_r_Lap
 
@@ -86,13 +118,7 @@ class DiffusionReactionSolver1D:
         Function returning a time step for u^(n). First find solution u_star to
         (I_minus_Lap)*u_star = (I_plus_Lap)*u + k*f(u). Then return u_star + (k/2.0)*(f(xs, u_star) - f(xs, u)).
         :param u: Current vector-represented function, u^(n), before a step is taken.
-        :param I_minus_Lap: Left-side matrix, in LU-factorized callable format.
-        :param I_plus_Lap: Right-side matrix, in sparse format.
-        :param f: Reaction/Source term.
         :param n: Which time step we are on.
-        :param k: Step size in time.
-        :param h: Step size in space.
-        :param mu: Diffusion constant.
         :return: Next step, u^(n+1).
         """
         t = n * self.k
@@ -123,40 +149,16 @@ class DiffusionReactionSolver1D:
         return u_star + (self.k / 2.0) * (f_vec_star - f_vec)
 
     def execute(self):
+        """
+        Step the solver forward in time through the specified number of steps.
+        :return: (N, M)-np.ndarray storing the solution at every time- and space-point.
+        """
         for n in range(0, self.N-1):
             # Subtract 1 from i to start from time-step 0 (t_0), instead of time-step 1 (t_1).
             self.u_n = self.one_dim_reaction_diffusion_step(self.u_n, n)
             self.u_storage[n+1, :] = np.copy(self.u_n)
 
         return self.u_storage
-
-
-def two_dim_laplace_neumann(M: int, format: str = 'coo', dtype: str = 'float64'):
-    """
-    Building the discretized Laplacian in two dimensions with block matrix sparse tools.
-    Built in Neumann boundary conditions. Need compensation for this in the solver-step.
-    :param M: Number of spatial discretization points in each spatial dimension.
-    :param format: Storage format for the sparse matrices.
-    :param dtype: Data type in the sparse matrices.
-    :return: Discretized two dimensional Laplacian, with Neumann boundary conditions.
-    """
-    inner_data = [[1.0] * (M - 2) + [2.0], -4.0, [2.0] + [1.0] * (M - 2)]
-    inner_diag = sp.diags(inner_data, offsets=[-1, 0, 1], format=format, dtype=dtype)
-    I_m = sp.identity(M, format=format, dtype=dtype)
-
-    # Rows of matrices:
-    # Initializing with the top row:
-    rows = [[inner_diag, 2*I_m] + (M - 2) * [None]]
-
-    # Adding the middle rows (1, m-2):
-    for i in range(1, M - 1):
-        row = [None] * M
-        row[i-1:i+2] = I_m, inner_diag, I_m
-        rows.append(row)
-
-    # Adding the bottom row:
-    rows.append((M - 2) * [None] + [2 * I_m, inner_diag])
-    return sp.bmat(rows, format=format, dtype=dtype)
 
 
 class DiffusionReactionSolver2D:
@@ -238,7 +240,7 @@ class DiffusionReactionSolver2D:
         :return: I_minus_Lap: Callable, LU-factorized Implicit-solver matrix.
                  I_plus_Lap: Sparse matrix, for generating right side vector.
         """
-        Lap_h = two_dim_laplace_neumann(self.M, format='csc')
+        Lap_h = two_dim_sparse_neumann_laplacian(self.M, format='csc')
         I_m = sp.identity(self.M * self.M, dtype='float64', format='csc')
 
         I_minus_Lap = spla.factorized(I_m - (self.r / 2.0) * Lap_h)

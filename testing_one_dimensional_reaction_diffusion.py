@@ -10,8 +10,6 @@ from typing import Union, Callable, Tuple
 
 from solvers import DiffusionReactionSolver1D
 
-# Function to generate a discretized matrix approximation of the 1D-Laplacian:
-# With Dirichlet conditions and Natural ordering.
 # def one_dim_sparse_laplacian(m: int):
 #     return sp.diags([1.0, -2.0, 1.0], [-1, 0, 1], dtype='float64', shape=(m, m), format='lil')
 #
