@@ -40,6 +40,10 @@ def two_dim_laplace_neumann(M: int, format: str = 'coo', dtype: str = 'float64')
     return sp.bmat(rows, format=format, dtype=dtype)
 
 
+class DiffusionReactionSolver1D:
+    pass
+
+
 class DiffusionReactionSolver2D:
 
     def __init__(self, u_init: np.ndarray, domain: Tuple[np.ndarray, np.ndarray], f: Union[Callable, None] = None,
@@ -188,49 +192,60 @@ class DiffusionReactionSolver2D:
         return self.u_storage
 
 
-# def two_dim_test():
-#     # Make a simple test!
-#     L, T = 2.0, 2.0
-#     M, N = 50, 50
-#     mu = 0.5
-#
-#     def u_exact(x, y, t):
-#         return x**2*(x - L)**2*y**2*(y - L)**2 + t**2
-#
-#     def f(x, y, t, u):
-#         kx = x**2*(x-L)**2
-#         ky = y**2*(y-L)**2
-#
-#         Cx = ky*((x - L)**2 + 4*np.sqrt(kx) + x**2)
-#         Cy = kx*((y - L)**2 + 4*np.sqrt(ky) + y**2)
-#
-#         return 2*t - (Cx + Cy)
-#
-#     def f1(x, y, t, u):
-#         return 0.0*x*y*t*u
-#
-#     X, Y = np.meshgrid(np.linspace(0.0, L, M), np.linspace(0.0, L, M))
-#     u_init = u_exact(X, Y, 0.0)
-#
-#     U_final = two_dim_reaction_diffusion_solver(u_init=u_init, domain=(X, Y), mu=mu, f=f, N=N, T=T)
-#
-#     u_test = u_exact(X, Y, 0.0)
-#     f_test = f(X, Y, 0.0, T)
-#
-#     fig = plt.figure()
-#     fig.suptitle("Numerical solution, t=T.")
-#     ax = fig.gca(projection='3d')
-#
-#     # ax.plot_surface(X, Y, u_test, cmap=cm.coolwarm)  # Surface-plot
-#     ax.plot_surface(X, Y, U_final[-1, :, :], cmap=cm.coolwarm, alpha=0.5)  # Surface-plot
-#     ax.plot_surface(X, Y, f_test, cmap=cm.plasma, alpha=0.5)  # Surface-plot
-#
-#     plt.xlabel('x', fontsize=12)
-#     plt.ylabel('y', fontsize=12)
-#     ax.set_zlabel("$U_{i, j}$", fontsize=12)
-#     # ax.set_zlim(0.0, 1.0)
-#
-#     plt.show()
+class SIR_Model:
+    # Framework for the two interlocked reaction diffusion solvers.
+    def __init__(self, S_init: np.ndarray, I_init: np.ndarray, mu_S_I: Tuple[float, float], beta: Union[float, Callable],
+                 gamma: Union[float, Callable], domain: Tuple[np.ndarray, np.ndarray], N: int = 100, T: float = 1.0):
+        """
+        :param S_init:
+        :param I_init:
+        :param mu_I_S:
+        :param beta:
+        :param gamma:
+        :param domain:
+        :param N:
+        :param T:
+        """
+
+        self.mu_S, self.mu_I = mu_S_I
+        if not callable(beta):
+            self.beta = np.vectorize(lambda *args: beta)
+        else:
+            self.beta = np.vectorize(beta)
+
+        if not callable(gamma):
+            self.gamma = np.vectorize(lambda *args: gamma)
+        else:
+            self.gamma = np.vectorize(gamma)
+
+        self.X, self.Y = domain
+        self.N = N
+        self.T = T
+
+        # Solver for the Susceptible population. Modify the reaction-vector function:
+        self.S_solver = DiffusionReactionSolver2D(u_init=S_init, domain=domain, mu=self.mu_S, N=self.N, T=self.T)
+        self.S_solver.generate_reaction_vector = self.S_generate_reaction_vector
+
+        # Solver for the Infected population. Modify the reaction-vector function:
+        self.I_solver = DiffusionReactionSolver2D(u_init=I_init, domain=domain, mu=self.mu_I, N=self.N, T=self.T)
+        self.I_solver.generate_reaction_vector = self.I_generate_reaction_vector
+
+    def S_generate_reaction_vector(self, *args):
+        """
+        :return: The recution in Susceptible population at each point in the domain.
+        """
+        return -self.beta(self.X, self.Y) * self.S_solver.u_n * self.I_solver.u_n
+
+    def I_generate_reaction_vector(self, *args):
+        """
+        :return: The recution in Susceptible population at each point in the domain.
+        """
+        return (self.beta(self.X, self.Y) * self.S_solver.u_n - self.gamma(self.X, self.Y)) * self.I_solver.u_n
+
+    def execute(self):
+        for n in range(0, self.N - 1):
+            self.S_solver.u_n = self.S_solver.two_dim_reaction_diffusion_step(n)
+            self.I_solver.u_n = self.I_solver.two_dim_reaction_diffusion_step(n)
 
 
 def test_1():
