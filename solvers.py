@@ -5,11 +5,15 @@ import scipy.sparse.linalg as spla
 
 # Graphical Libraries:
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # For 3-d plot
-from matplotlib import cm
+import matplotlib.animation as anim
+import matplotlib.cm as cm
+# import ffmpeg
 
 # Type enforcing:
 from typing import Union, Callable, Tuple, Iterable
+
+# Set the path for the mp4-animation-saver:
+plt.rcParams['animation.ffmpeg_path'] = r'C:\FFmpeg\bin\ffmpeg.exe'
 
 
 def one_dim_sparse_laplacian(m: int):
@@ -199,7 +203,7 @@ class DiffusionReactionSolver2D:
         # Domain stored in a np.meshgrid format.
         self.X, self.Y = domain
 
-        # Retaining an (M, M)-np.ndarray for access to current values of u at timestep n.
+        # Retaining an (M, M)-np.ndarray for access to current values of u at time step n.
         self.u_n = np.copy(u_init)
 
         # Storing the initial state of the function, and making storage for the steps taken.
@@ -215,13 +219,12 @@ class DiffusionReactionSolver2D:
             self.f = np.vectorize(lambda x, y, t, u: f(x, y, t, u, *args))
         else:
             self.f = np.vectorize(lambda *args: 0.0)
-
         self.mu = mu
 
         # Getting the composite diffusion/step-size parameter r:
         self.r = self.mu * self.k / (self.h**2)
 
-        # Generatimg the Left-hand and Right-hand side matrices for doing implicit steps:
+        # Generating the Left-hand and Right-hand side matrices for doing implicit steps:
         self.I_minus_Lap, self.I_plus_Lap = self.generate_two_dim_step_matrices()
 
         # Setting the boundary boolean arrays:
@@ -231,7 +234,8 @@ class DiffusionReactionSolver2D:
         self.boundaries[1][self.M - 1, 1:self.M - 1] = True  # Northern boundary.
         self.boundaries[2][1:self.M - 1, 0] = True  # Western boundary.
         self.boundaries[3][0, 1:self.M - 1] = True  # Southern boundary.
-        self.corners = [(self.M - 1, self.M - 1), (0, self.M - 1), (0, 0), (self.M - 1, 0)]
+        self.corners = [(self.M - 1, self.M - 1), (0, self.M - 1), (0, 0), (self.M - 1, 0)]  # Corner indices.
+        self.executed = False
 
     def generate_two_dim_step_matrices(self):
         """
@@ -302,10 +306,11 @@ class DiffusionReactionSolver2D:
         return u_star + (self.k / 2.0) * (f_vec_star - f_vec)
 
     def execute(self):
-        for n in range(0, self.N - 1):
-            self.u_n = self.two_dim_reaction_diffusion_step(n)
-            self.u_storage[n + 1, :, :] = np.copy(self.u_n)  # .reshape(self.M, self.M, order='C'))
-
+        if not self.executed:
+            for n in range(0, self.N - 1):
+                self.u_n = self.two_dim_reaction_diffusion_step(n)
+                self.u_storage[n + 1, :, :] = np.copy(self.u_n)
+            self.executed = True
         return self.u_storage
 
 
@@ -336,6 +341,7 @@ class SIR_Model:
             self.gamma = np.vectorize(gamma)
 
         self.X, self.Y = domain
+        self.M = S_init.shape[0]
         self.N = N
         self.T = T
 
@@ -346,6 +352,13 @@ class SIR_Model:
         # Solver for the Infected population. Modify the reaction-vector function:
         self.I_solver = DiffusionReactionSolver2D(u_init=I_init, domain=domain, mu=self.mu_I, N=self.N, T=self.T)
         self.I_solver.generate_reaction_vector = self.I_generate_reaction_vector
+
+        # Storage and execution status:
+        self.executed = False
+        self.S_storage = np.zeros((self.N, self.M, self.M), dtype='float64')
+        self.S_storage[0, :, :] = np.copy(S_init)
+        self.I_storage = np.zeros((self.N, self.M, self.M), dtype='float64')
+        self.I_storage[0, :, :] = np.copy(I_init)
 
     def S_generate_reaction_vector(self, *args):
         """
@@ -359,125 +372,73 @@ class SIR_Model:
         """
         return (self.beta(self.X, self.Y) * self.S_solver.u_n - self.gamma(self.X, self.Y)) * self.I_solver.u_n
 
+
+    def perform_single_step(self, n: int):
+        self.S_solver.u_n = self.S_solver.two_dim_reaction_diffusion_step(n)
+        self.I_solver.u_n = self.I_solver.two_dim_reaction_diffusion_step(n)
+
     def execute(self):
-        for n in range(0, self.N - 1):
-            self.S_solver.u_n = self.S_solver.two_dim_reaction_diffusion_step(n)
-            self.I_solver.u_n = self.I_solver.two_dim_reaction_diffusion_step(n)
+        if not self.executed:
+            for n in range(0, self.N - 1):
+                self.perform_single_step(n)
+                self.S_storage[n+1, :, :] = np.copy(self.S_solver.u_n)
+                self.I_storage[n+1, :, :] = np.copy(self.I_solver.u_n)
+
+        return self.S_storage, self.I_storage
 
 
-def test_1():
-    print("Test 1:")
-    L, T = 3.0, 1.0
-    M, N = 100, 100
-    xs, ys = np.linspace(0.0, L, M), np.linspace(0.0, L, M)
-    X, Y = np.meshgrid(xs, ys)
+class SIR_Animation:
 
-    def u_exact(x, y, t):
-        return t**3 + 2*y*(L - y) + x*(L - x)
+    def __init__(self, model: SIR_Model):
+        self.frames = model.N
+        self.X, self.Y = model.X, model.Y
+        self.model = model
+        self.n = 0
+        self.fps = 25
 
-    mu = 1.0
+    def play_animation(self):
 
-    def f(x, y, t, *args):
-        return 3*t**2 - mu*(-6)
+        fig, (S_ax, I_ax) = plt.subplots(1, 2, subplot_kw={'projection': '3d', 'zlim': (0, 2.0)})
+        S_ax.set_title("Susceptible Distribution")
+        I_ax.set_title("Infected Distribution")
 
-    u_init = u_exact(X, Y, 0.0)
-    bc_funcs = [lambda *args: -L, lambda *args: -2.00*L, lambda *args: -L, lambda *args: -2*L]
+        plot_args = {'rstride': 1, 'cstride': 1, 'linewidth': 0.01, 'cmap': cm.coolwarm, 'antialiased': True, 'color': 'w',
+                      'shade': True}
 
-    solver = DiffusionReactionSolver2D(u_init, (X, Y), f, mu, N, T, bc_funcs)
-    u_num = solver.execute()
+        axes = [S_ax.plot_surface(self.X, self.Y, self.model.S_solver.u_n),
+                I_ax.plot_surface(self.X, self.Y, self.model.I_solver.u_n)]
 
-    u_test = u_exact(X, Y, T)
-    f_test = f(X, Y, 0.0, T)
+        S_ax.view_init(elev=30, azim=20)
+        I_ax.view_init(elev=30, azim=20)
 
-    fig = plt.figure()
-    fig.suptitle("Numerical solution, t=T.")
-    ax = fig.gca(projection='3d')
+        def update_plot(i, axes, plot_args):
+            self.model.perform_single_step(i)
 
-    ax.plot_surface(X, Y, u_test, cmap=cm.plasma, alpha=0.9)  # Surface-plot
-    ax.plot_surface(X, Y, u_num[-1, :, :], cmap=cm.coolwarm, alpha=0.9)  # Surface-plot
-    # ax.plot_surface(X, Y, f_test, cmap=cm.plasma, alpha=0.5)  # Surface-plot
+            axes[0].remove()
+            axes[0] = S_ax.plot_surface(self.X, self.Y, self.model.S_solver.u_n, **plot_args)
+            S_ax.azim += 1.0
 
-    errors = np.abs(u_test - u_num[-1, :, :])
-    sup_error = np.max(errors)
-    sup_error_loc = np.unravel_index(np.argmax(errors), errors.shape)
-    print(f"The position with the sup-error is: {sup_error_loc}")
-    print(f"Then sup-error is: {sup_error:.3e}")
+            axes[1].remove()
+            axes[1] = I_ax.plot_surface(self.X, self.Y, self.model.I_solver.u_n, **plot_args)
+            I_ax.azim += 1.0
 
-    plt.xlabel('x', fontsize=12)
-    plt.ylabel('y', fontsize=12)
-    ax.set_zlabel("$U_{i, j}$", fontsize=12)
-    # ax.set_zlim(0.0, 1.0)
-    ax.legend()
-    plt.show()
+        anim_obj = anim.FuncAnimation(fig=fig, func=update_plot, frames=self.frames, fargs=(axes, plot_args),
+                                      interval=int(1000.0/self.fps))
 
+        # Works if you have 'ffmpeg' installed:
+        # my_writer = anim.FFMpegWriter(fps=self.fps, codec='libx264',
+        #                               extra_args=['-b', '864k', '-tune', 'animation'])
+        # anim_obj.save("animations\\test5.mp4", writer=my_writer)
 
-def test_2():
+        # Otherwise:
+        # filename = "test1"
+        # html_writer = anim.HTMLWriter(fps=self.fps)
+        # anim_obj.save(filename=filename+'.html', writer=html_writer)
 
-    L, T = 1.0, 1.0
-    M, N = 100, 100
-
-    def u_exact(x, y, t):
-        return t ** 3 + x * (1 - x)
-
-    def f(x, y, t, u):
-        return 3 * t ** 2 + 1.0
-    mu = 0.5
-
-    X, Y = np.meshgrid(np.linspace(0.0, L, M), np.linspace(0.0, L, M))
-
-    u_init = u_exact(X, Y, 0.0)
-
-    def BC_E(x, y, t, u):
-        return -1.0
-
-    def BC_N(x, y, t, u):
-        return 0.0
-
-    def BC_W(x, y, t, u):
-        return -1.0
-
-    def BC_S(x, y, t, u):
-        return 0.0
-
-    boundary_funcs = [np.vectorize(func) for func in (BC_E, BC_N, BC_W, BC_S)]
-    solver = DiffusionReactionSolver2D(u_init, (X, Y), mu, f, N, T, boundary_funcs)
-
-    u_num = solver.execute()
-
-    u_test = u_exact(X, Y, T)
-    f_test = f(X, Y, 0.0, T)
-
-    errors = np.abs(u_test - u_num[-1, :, :])
-    sup_error = np.max(errors)
-    sup_error_loc = np.unravel_index(np.argmax(errors), errors.shape)
-    print(f"The position with the sup-error is: {sup_error_loc}")
-    print(f"Then sup-error is: {sup_error:.3e}")
-
-    fig = plt.figure()
-    fig.suptitle("Numerical solution, t=T.")
-    ax = fig.gca(projection='3d')
-
-    ax.plot_surface(X, Y, u_test, cmap=cm.plasma, alpha=0.5)  # Surface-plot
-    ax.plot_surface(X, Y, u_num[-1, :, :], cmap=cm.coolwarm, alpha=0.5)  # Surface-plot
-
-    sup_error = np.max(np.abs(u_test - u_num[-1, :, :]))
-    print(f"Then sup-error is: {sup_error:.3e}")
-    # ax.plot_surface(X, Y, f_test, cmap=cm.plasma, alpha=0.5)  # Surface-plot
-
-    plt.xlabel('x', fontsize=12)
-    plt.ylabel('y', fontsize=12)
-    ax.set_zlabel("$U_{i, j}$", fontsize=12)
-    # ax.set_zlim(0.0, 1.0)
-    ax.legend()
-    plt.show()
+        plt.show()
 
     pass
 
 
 if __name__ == '__main__':
-    # two_dim_test()
-    test_1()
-    # test_2()
-
-# two_dim_step_matrices(4, 0.2)
-# two_dim_laplace_neumann(4)
+    pass

@@ -4,13 +4,14 @@ from scipy.integrate import solve_ivp
 
 # Plotting libraries:
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D  # For 3-d plot
 from matplotlib import cm
 
 # Type enforcing:
 from typing import Union, Callable, Tuple, Iterable
 
 # Solver:
-from solvers import SIR_Model
+from solvers import SIR_Model, SIR_Animation
 
 
 def SIR_ode_sys(t: float, y: np.ndarray, beta: float, gamma: float):
@@ -55,8 +56,8 @@ def SIR_ode_epidemic():
 
 def test_two_dim_SIR():
 
-    M, N = 50, 200
-    L, T = 5.0, 10.0
+    M, N = 50, 80
+    L, T = 5.0, 2.0
     xs, ys = np.linspace(0.0, L, M), np.linspace(0.0, L, M)
     X, Y = np.meshgrid(xs, ys)
 
@@ -67,29 +68,31 @@ def test_two_dim_SIR():
     I_init[int(2*M/4):int(3*M/4), int(2*M/4):int(3*M/4)] = 0.2*(X[int(2*M/4):int(3*M/4), int(2*M/4):int(3*M/4)]*(L - X[int(2*M/4):int(3*M/4), int(2*M/4):int(3*M/4)]))
 
     model = SIR_Model(S_init, I_init, mu_S_I=(0.05, 0.05), beta=2.0, gamma=0.3, domain=(X, Y), N=N, T=T)
-    model.execute()
-
-    S_final = model.S_solver.u_n
-    I_final = model.I_solver.u_n
-
-    # Plotting code:
-    fig, axes = plt.subplots(1, 2, subplot_kw=dict(projection='3d'))
-    fig.suptitle("Numerical solution, t=T.")
-
-    axes[0].plot_surface(X, Y, S_final, cmap=cm.coolwarm, alpha=0.9)  # Surface-plot
-    axes[0].set_title("Final Susceptible")
-
-    axes[1].plot_surface(X, Y, I_final, cmap=cm.coolwarm, alpha=0.9)  # Surface-plot
-    axes[1].set_title("Final Infected")
-
-    axes[0].set_xlabel('X')
-    axes[0].set_ylabel('Y')
-
-    axes[1].set_xlabel('X')
-    axes[1].set_ylabel('Y')
-
-    plt.tight_layout()
-    plt.show()
+    animate_model = SIR_Animation(model)
+    animate_model.play_animation()
+    # model.execute()
+    #
+    # S_final = model.S_solver.u_n
+    # I_final = model.I_solver.u_n
+    #
+    # # Plotting code:
+    # fig, axes = plt.subplots(1, 2, subplot_kw=dict(projection='3d'))
+    # fig.suptitle("Numerical solution, t=T.")
+    #
+    # axes[0].plot_surface(X, Y, S_final, cmap=cm.coolwarm, alpha=0.9)  # Surface-plot
+    # axes[0].set_title("Final Susceptible")
+    #
+    # axes[1].plot_surface(X, Y, I_final, cmap=cm.coolwarm, alpha=0.9)  # Surface-plot
+    # axes[1].set_title("Final Infected")
+    #
+    # axes[0].set_xlabel('X')
+    # axes[0].set_ylabel('Y')
+    #
+    # axes[1].set_xlabel('X')
+    # axes[1].set_ylabel('Y')
+    #
+    # plt.tight_layout()
+    # plt.show()
 
 
 if __name__ == '__main__':
