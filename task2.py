@@ -75,6 +75,7 @@ def test_two_dim_SIR():
     model = SIR_Model(S_init, I_init, mu_S_I=(0.05, 0.5), beta=2.0, gamma=0.3, domain=(X, Y), N=N, T=T)
     animate_model = SIR_Animation(model)
     animate_model.play_animation()
+
     # model.execute()
     #
     # S_final = model.S_solver.u_n

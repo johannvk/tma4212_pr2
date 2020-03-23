@@ -54,32 +54,36 @@ def one_dim_diffusion_reaction_convergence(u_exact: Callable, mu: float, f: Call
     print(f"Time sup-errors: {time_sup_errors}\n")
 
     Ns -= 1  # To get the precise value of 'h' when taking the reciprocal.
-    time_slope = linregress(np.log10(1 / Ns), np.log10(time_sup_errors))[0]
+    log_ks = np.log10(T / Ns)
+    time_slope = linregress(log_ks, np.log10(time_sup_errors))[0]
 
     Ms -= 1
-    space_slope = linregress(np.log10(1/Ms), np.log10(space_sup_errors))[0]
+    log_hs = np.log10((X[1]-X[0])/Ms)
+    space_slope = linregress(log_hs, np.log10(space_sup_errors))[0]
 
     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
-    ax.set_title("Convergence Plot, Neumann Boundary")
-    ax.plot(np.log10(1/Ns), np.log10(time_sup_errors), linewidth=2.5, label=f"Decreasing k, Slope {time_slope:.3f}, h={(X[1]-X[0])/(M-1):.2e}")
-    ax.plot(np.log10(1/Ms), np.log10(space_sup_errors), linewidth=2.5, label=f"Decrasing h, Slope {space_slope:.3f}, k={T/(N-1):.2e}")
+    ax.set_title("Convergence Plot, Dirichlet Boundary")
+    ax.plot(log_ks, np.log10(time_sup_errors), linewidth=2.5, label=f"Decreasing k, Slope {time_slope:.3f}, h={(X[1]-X[0])/(M-1):.2e}")
+    ax.plot(log_hs, np.log10(space_sup_errors), linewidth=2.5, label=f"Decrasing h, Slope {space_slope:.3f}, k={T/(N-1):.2e}")
 
     ax.set_xlabel("log(step length)")
     ax.set_ylabel("log(Sup|u - U|)")
-    ax.legend(loc="best", fontsize=12)
+    ax.legend(loc="upper left", fontsize=13)
+    ax.grid(linestyle='--')
     plt.tight_layout()
     plt.show()
 
 
 def test_one_dim_dirichlet_convergence():
     print("Testing one-dimensional Dirichlet boundary convergence.\n")
+    T = 0.3
 
     def u_exact(x, t):
         return np.exp(-np.pi**2*t)*np.sin(np.pi*x) - t*x*(1.0 - x)
     mu = 1.0
     f = lambda x, t, u: -x * (1.0 - x) - 2*t
 
-    one_dim_diffusion_reaction_convergence(u_exact=u_exact, mu=mu, f=f)
+    one_dim_diffusion_reaction_convergence(u_exact=u_exact, mu=mu, f=f, T=T, N=100)
 
 
 def test_one_dim_dirichlet():
@@ -280,10 +284,10 @@ def test_2_two_dim_neumann():
 
 
 def test_batch():
-    # test_one_dim_dirichlet_convergence()
+    test_one_dim_dirichlet_convergence()
     # test_one_dim_dirichlet()
 
-    test_one_dim_neumann_convergence()
+    # test_one_dim_neumann_convergence()
     # test_one_dim_neumann()
 
     # test_1_two_dim_neumann()
