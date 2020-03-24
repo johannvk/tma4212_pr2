@@ -285,13 +285,13 @@ def test_2_two_dim_neumann():
 
 def test_batch():
     test_one_dim_dirichlet_convergence()
-    # test_one_dim_dirichlet()
+    test_one_dim_dirichlet()
 
-    # test_one_dim_neumann_convergence()
-    # test_one_dim_neumann()
+    test_one_dim_neumann_convergence()
+    test_one_dim_neumann()
 
-    # test_1_two_dim_neumann()
-    # test_2_two_dim_neumann()
+    test_1_two_dim_neumann()
+    test_2_two_dim_neumann()
 
 
 if __name__ == '__main__':

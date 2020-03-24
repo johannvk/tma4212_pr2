@@ -61,18 +61,18 @@ def test_two_dim_SIR():
     xs, ys = np.linspace(0.0, L, M), np.linspace(0.0, L, M)
     X, Y = np.meshgrid(xs, ys)
 
-    S_init = np.ones((M, M))*0.3
+    S_init = np.ones((M, M))*1.
 
     init_indices = np.full((M, M), False, dtype=bool)
     # Setting inner square to True:
     init_indices[(1.0 < X) & (X < 3.0) & (2.0 < Y) & (Y < 4.0)] = True
 
-    S_init[init_indices] += np.abs(np.sin(np.pi*np.sqrt(X[init_indices]**2 + Y[init_indices]**2)))
+    S_init[init_indices] -= 0.2  # np.abs(np.sin(np.pi*np.sqrt(X[init_indices]**2 + Y[init_indices]**2)))
 
     I_init = np.zeros((M, M))
     I_init[:, :] = 0.2
 
-    model = SIR_Model(S_init, I_init, mu_S_I=(0.05, 0.5), beta=2.0, gamma=0.3, domain=(X, Y), N=N, T=T)
+    model = SIR_Model(S_init, I_init, mu_S_I=(0.05, 0.05), beta=0.2, gamma=0.3, domain=(X, Y), N=N, T=T)
     animate_model = SIR_Animation(model)
     animate_model.play_animation()
 

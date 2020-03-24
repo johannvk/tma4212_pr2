@@ -372,7 +372,6 @@ class SIR_Model:
         """
         return (self.beta(self.X, self.Y) * self.S_solver.u_n - self.gamma(self.X, self.Y)) * self.I_solver.u_n
 
-
     def perform_single_step(self, n: int):
         self.S_solver.u_n = self.S_solver.two_dim_reaction_diffusion_step(n)
         self.I_solver.u_n = self.I_solver.two_dim_reaction_diffusion_step(n)
@@ -441,4 +440,5 @@ class SIR_Animation:
 
 
 if __name__ == '__main__':
+    print("ran solvers.py")
     pass
