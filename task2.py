@@ -119,7 +119,7 @@ def display_two_dim_SI():
 def gaussian(X, Y, means=np.array([0.0, 0.0]), variance=np.array([1.0, 1.0])):
     assert(np.all(variance > 0))
     normalization = 1.0/(2*np.pi*np.prod(variance))
-    return normalization*np.exp(-0.5*(((X - means[0])/variance[1])**2 + ((Y - means[1])/variance[1])**2))
+    return normalization*np.exp(-0.5*(((X - means[0])/variance[0])**2 + ((Y - means[1])/variance[1])**2))
 
 
 def two_city_model():

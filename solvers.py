@@ -428,11 +428,6 @@ class SIAnimation:
                                xlabel="X", ylabel="Y")
         color_ax = fig.add_subplot(gridspec[2])
 
-        # Old way of generating figure and subplots:
-        # fig, (S_ax, I_ax, color_ax) = plt.subplots(1, 2, figsize=(10, 6),
-        #                                            gridspec_kw={'nrows': 1, 'ncols': 3, 'width_ratios': [1, 1, 0.05]},
-        #                                            subplot_kw={'projection': '3d', 'zlim': self.zlim})
-
         S_ax.set_title("S: Susceptible Population", pad=20, fontsize=16)
         I_ax.set_title("I: Infected Population", pad=20, fontsize=16)
 
@@ -481,7 +476,7 @@ class SIAnimation:
         # anim_obj.save("animations\\test5.mp4", writer=my_writer)
 
         # Otherwise:
-        if save and as_gif:
+        if save and as_gif:  # Needs 'imagemagick' installed:
             print("Saving animation as .gif.")
             anim_obj.save(filename=filename+'.gif', writer='imagemagick')
         elif save:

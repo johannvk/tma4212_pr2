@@ -15,11 +15,6 @@ from typing import Union, Callable, Tuple
 
 from solvers import DiffusionReactionSolver1D, DiffusionReactionSolver2D
 
-# font = {'family' : 'normal',
-#         'weight' : 'bold',
-#         'size'   : 22}
-#
-# matplotlib.rc('font', **font)
 plt.rcParams.update({'font.size': 15})
 
 
