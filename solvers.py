@@ -7,6 +7,7 @@ import scipy.sparse.linalg as spla
 import matplotlib.pyplot as plt
 import matplotlib.animation as anim
 import matplotlib.cm as cm
+import matplotlib.gridspec as gs
 # import ffmpeg
 
 # Type enforcing:
@@ -168,7 +169,7 @@ class DiffusionReactionSolver1D:
 class DiffusionReactionSolver2D:
 
     def __init__(self, u_init: np.ndarray, domain: Tuple[np.ndarray, np.ndarray], f: Union[Callable, None] = None,
-                 mu: float = 1.0, N: int = 100, T: float = 1.0, Neumann_BC = None, *args):
+                 mu: float = 1.0, N: int = 100, T: float = 1.0, Neumann_BC = None, store=True, *args):
         """
         Initializer function for
         :param u_init: Initial Values for the distribution, in (M, M)-np.ndarray.
@@ -207,8 +208,10 @@ class DiffusionReactionSolver2D:
         self.u_n = np.copy(u_init)
 
         # Storing the initial state of the function, and making storage for the steps taken.
-        self.u_storage = np.zeros((self.N, self.M, self.M), dtype='float64')
-        self.u_storage[0, :, :] = np.copy(u_init)
+        self.store = store
+        if self.store:
+            self.u_storage = np.zeros((self.N, self.M, self.M), dtype='float64')
+            self.u_storage[0, :, :] = np.copy(u_init)
 
         # Step size in space and time respectively:
         self.h = (np.max(domain[0]) - np.min(domain[0])) / (self.M - 1)
@@ -235,7 +238,6 @@ class DiffusionReactionSolver2D:
         self.boundaries[2][1:self.M - 1, 0] = True  # Western boundary.
         self.boundaries[3][0, 1:self.M - 1] = True  # Southern boundary.
         self.corners = [(self.M - 1, self.M - 1), (0, self.M - 1), (0, 0), (self.M - 1, 0)]  # Corner indices.
-        self.executed = False
 
     def generate_two_dim_step_matrices(self):
         """
@@ -306,18 +308,22 @@ class DiffusionReactionSolver2D:
         return u_star + (self.k / 2.0) * (f_vec_star - f_vec)
 
     def execute(self):
-        if not self.executed:
+        if self.store:
             for n in range(0, self.N - 1):
                 self.u_n = self.two_dim_reaction_diffusion_step(n)
                 self.u_storage[n + 1, :, :] = np.copy(self.u_n)
-            self.executed = True
-        return self.u_storage
+            return self.u_storage
+        else:
+            for n in range(0, self.N - 1):
+                self.u_n = self.two_dim_reaction_diffusion_step(n)
+            return self.u_n
 
 
-class SIR_Model:
+class SIModel:
     # Framework for the two interlocked reaction diffusion solvers.
-    def __init__(self, S_init: np.ndarray, I_init: np.ndarray, mu_S_I: Tuple[float, float], beta: Union[float, Callable],
-                 gamma: Union[float, Callable], domain: Tuple[np.ndarray, np.ndarray], N: int = 100, T: float = 1.0):
+    def __init__(self, S_init: np.ndarray, I_init: np.ndarray, mu_S_I: Tuple[float, float],
+                 beta: Union[float, Callable], gamma: Union[float, Callable], domain: Tuple[np.ndarray, np.ndarray],
+                 N: int = 100, T: float = 1.0, store=True):
         """
         :param S_init:
         :param I_init:
@@ -327,6 +333,7 @@ class SIR_Model:
         :param domain:
         :param N:
         :param T:
+        :param store: Whether or not to store the values of the arrays as they are computed.
         """
 
         self.mu_S, self.mu_I = mu_S_I
@@ -344,21 +351,24 @@ class SIR_Model:
         self.M = S_init.shape[0]
         self.N = N
         self.T = T
+        self.store = store
 
         # Solver for the Susceptible population. Modify the reaction-vector function:
-        self.S_solver = DiffusionReactionSolver2D(u_init=S_init, domain=domain, mu=self.mu_S, N=self.N, T=self.T)
+        self.S_solver = DiffusionReactionSolver2D(u_init=S_init, domain=domain, mu=self.mu_S, N=self.N, T=self.T,
+                                                  store=self.store)
         self.S_solver.generate_reaction_vector = self.S_generate_reaction_vector
 
         # Solver for the Infected population. Modify the reaction-vector function:
-        self.I_solver = DiffusionReactionSolver2D(u_init=I_init, domain=domain, mu=self.mu_I, N=self.N, T=self.T)
+        self.I_solver = DiffusionReactionSolver2D(u_init=I_init, domain=domain, mu=self.mu_I, N=self.N, T=self.T,
+                                                  store=self.store)
         self.I_solver.generate_reaction_vector = self.I_generate_reaction_vector
 
         # Storage and execution status:
-        self.executed = False
-        self.S_storage = np.zeros((self.N, self.M, self.M), dtype='float64')
-        self.S_storage[0, :, :] = np.copy(S_init)
-        self.I_storage = np.zeros((self.N, self.M, self.M), dtype='float64')
-        self.I_storage[0, :, :] = np.copy(I_init)
+        if self.store:
+            self.S_storage = np.zeros((self.N, self.M, self.M), dtype='float64')
+            self.S_storage[0, :, :] = np.copy(S_init)
+            self.I_storage = np.zeros((self.N, self.M, self.M), dtype='float64')
+            self.I_storage[0, :, :] = np.copy(I_init)
 
     def S_generate_reaction_vector(self, *args):
         """
@@ -377,49 +387,90 @@ class SIR_Model:
         self.I_solver.u_n = self.I_solver.two_dim_reaction_diffusion_step(n)
 
     def execute(self):
-        if not self.executed:
+        if self.store:
             for n in range(0, self.N - 1):
                 self.perform_single_step(n)
                 self.S_storage[n+1, :, :] = np.copy(self.S_solver.u_n)
                 self.I_storage[n+1, :, :] = np.copy(self.I_solver.u_n)
+            return self.S_storage, self.I_storage
+        else:
+            for n in range(0, self.N - 1):
+                self.perform_single_step(n)
+            return self.S_solver.u_n, self.I_solver.u_n
 
-        return self.S_storage, self.I_storage
 
+class SIAnimation:
 
-class SIR_Animation:
-
-    def __init__(self, model: SIR_Model):
+    def __init__(self, model: SIModel, zlim: np.ndarray, initial_view=None, elev_rotation=0.0, azim_rotation=1.0):
         self.frames = model.N
         self.X, self.Y = model.X, model.Y
         self.model = model
         self.n = 0
         self.fps = 25
+        self.zlim = zlim
 
-    def play_animation(self):
+        if initial_view is None:
+            self.initial_view = {'elev': 30, 'azim': 0}
+        else:
+            self.initial_view = initial_view
+        self.rotation = 1.0
+        self.elev_rotation = elev_rotation
+        self.azim_rotation = azim_rotation
 
-        fig, (S_ax, I_ax) = plt.subplots(1, 2, subplot_kw={'projection': '3d', 'zlim': (0, 2.0)})
-        S_ax.set_title("Susceptible Distribution")
-        I_ax.set_title("Infected Distribution")
+    def play_animation(self, save=False, filename='test_anim', as_gif=False):
 
-        plot_args = {'rstride': 1, 'cstride': 1, 'linewidth': 0.01, 'cmap': cm.coolwarm, 'antialiased': True, 'color': 'w',
-                      'shade': True}
+        fig = plt.figure(figsize=(10, 8))
+        gridspec = gs.GridSpec(1, 3, width_ratios=[1, 1, 0.05])
 
-        axes = [S_ax.plot_surface(self.X, self.Y, self.model.S_solver.u_n),
-                I_ax.plot_surface(self.X, self.Y, self.model.I_solver.u_n)]
+        S_ax = fig.add_subplot(gridspec[0], projection='3d', zlim=self.zlim,
+                               xlabel="X", ylabel="Y")
+        I_ax = fig.add_subplot(gridspec[1], projection='3d', zlim=self.zlim,
+                               xlabel="X", ylabel="Y")
+        color_ax = fig.add_subplot(gridspec[2])
 
-        S_ax.view_init(elev=30, azim=20)
-        I_ax.view_init(elev=30, azim=20)
+        # Old way of generating figure and subplots:
+        # fig, (S_ax, I_ax, color_ax) = plt.subplots(1, 2, figsize=(10, 6),
+        #                                            gridspec_kw={'nrows': 1, 'ncols': 3, 'width_ratios': [1, 1, 0.05]},
+        #                                            subplot_kw={'projection': '3d', 'zlim': self.zlim})
+
+        S_ax.set_title("S: Susceptible Population", pad=20, fontsize=16)
+        I_ax.set_title("I: Infected Population", pad=20, fontsize=16)
+
+        # Adding single color-bar:
+        mappable = plt.cm.ScalarMappable(cmap=plt.cm.plasma)
+        mappable.set_array(self.model.I_solver.u_n)
+        mappable.set_clim(0.0, np.maximum(np.max(self.model.S_solver.u_n), np.max(self.model.I_solver.u_n)))
+        plt.colorbar(mappable, cax=color_ax, orientation="vertical")
+
+        # Tighten up the entire figure:
+        plt.tight_layout(rect=[0.0, 0.02, 1.0, 0.99])
+
+        # Defining plot arguments to be sent to the
+        plot_args = {'rstride': 1, 'cstride': 1, 'linewidth': 0.01, 'cmap': mappable.cmap, 'norm': mappable.norm,
+                     'antialiased': True, 'shade': True}
+
+        axes = [S_ax.plot_surface(self.X, self.Y, self.model.S_solver.u_n, **plot_args),
+                I_ax.plot_surface(self.X, self.Y, self.model.I_solver.u_n, **plot_args)]
+
+        S_ax.view_init(**self.initial_view)
+        time_text = plt.figtext(x=0.02, y=0.94, s=f"T: {0 * self.model.S_solver.k:.3f}")
+
+        I_ax.view_init(**self.initial_view)
 
         def update_plot(i, axes, plot_args):
             self.model.perform_single_step(i)
+            time_text.set_text(f"T: {i * self.model.S_solver.k:.3f}")
 
             axes[0].remove()
             axes[0] = S_ax.plot_surface(self.X, self.Y, self.model.S_solver.u_n, **plot_args)
-            S_ax.azim += 1.0
+            S_ax.elev += self.elev_rotation
+            S_ax.azim += self.azim_rotation
 
             axes[1].remove()
             axes[1] = I_ax.plot_surface(self.X, self.Y, self.model.I_solver.u_n, **plot_args)
-            I_ax.azim += 1.0
+            I_ax.elev += self.elev_rotation
+            I_ax.azim += self.azim_rotation
+            return time_text,
 
         anim_obj = anim.FuncAnimation(fig=fig, func=update_plot, frames=self.frames, fargs=(axes, plot_args),
                                       interval=int(1000.0/self.fps))
@@ -430,13 +481,16 @@ class SIR_Animation:
         # anim_obj.save("animations\\test5.mp4", writer=my_writer)
 
         # Otherwise:
-        # filename = "test1"
-        # html_writer = anim.HTMLWriter(fps=self.fps)
-        # anim_obj.save(filename=filename+'.html', writer=html_writer)
-
-        plt.show()
-
-    pass
+        if save and as_gif:
+            print("Saving animation as .gif.")
+            anim_obj.save(filename=filename+'.gif', writer='imagemagick')
+        elif save:
+            print("Saving animation as html.")
+            html_writer = anim.HTMLWriter(fps=self.fps)
+            anim_obj.save(filename=filename + '.html', writer=html_writer)
+        else:
+            plt.show()
+        return np.array([self.model.S_solver.u_n, self.model.I_solver.u_n])
 
 
 if __name__ == '__main__':
