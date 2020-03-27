@@ -8,13 +8,9 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as anim
 import matplotlib.cm as cm
 import matplotlib.gridspec as gs
-# import ffmpeg
 
 # Type enforcing:
 from typing import Union, Callable, Tuple, Iterable
-
-# Set the path for the mp4-animation-saver:
-plt.rcParams['animation.ffmpeg_path'] = r'C:\FFmpeg\bin\ffmpeg.exe'
 
 
 def one_dim_sparse_laplacian(m: int):
@@ -401,13 +397,13 @@ class SIModel:
 
 class SIAnimation:
 
-    def __init__(self, model: SIModel, zlim: np.ndarray, initial_view=None, elev_rotation=0.0, azim_rotation=1.0):
+    def __init__(self, model: SIModel, zlims: Tuple[np.ndarray, np.ndarray], initial_view=None, elev_rotation=0.0, azim_rotation=1.0):
         self.frames = model.N
         self.X, self.Y = model.X, model.Y
         self.model = model
         self.n = 0
         self.fps = 25
-        self.zlim = zlim
+        self.zlim_S, self.zlim_I = zlims[0], zlims[1]
 
         if initial_view is None:
             self.initial_view = {'elev': 30, 'azim': 0}
@@ -422,9 +418,9 @@ class SIAnimation:
         fig = plt.figure(figsize=(10, 8))
         gridspec = gs.GridSpec(1, 3, width_ratios=[1, 1, 0.05])
 
-        S_ax = fig.add_subplot(gridspec[0], projection='3d', zlim=self.zlim,
+        S_ax = fig.add_subplot(gridspec[0], projection='3d', zlim=self.zlim_S,
                                xlabel="X", ylabel="Y")
-        I_ax = fig.add_subplot(gridspec[1], projection='3d', zlim=self.zlim,
+        I_ax = fig.add_subplot(gridspec[1], projection='3d', zlim=self.zlim_I,
                                xlabel="X", ylabel="Y")
         color_ax = fig.add_subplot(gridspec[2])
 
@@ -469,11 +465,6 @@ class SIAnimation:
 
         anim_obj = anim.FuncAnimation(fig=fig, func=update_plot, frames=self.frames, fargs=(axes, plot_args),
                                       interval=int(1000.0/self.fps))
-
-        # Works if you have 'ffmpeg' installed:
-        # my_writer = anim.FFMpegWriter(fps=self.fps, codec='libx264',
-        #                               extra_args=['-b', '864k', '-tune', 'animation'])
-        # anim_obj.save("animations\\test5.mp4", writer=my_writer)
 
         # Otherwise:
         if save and as_gif:  # Needs 'imagemagick' installed:

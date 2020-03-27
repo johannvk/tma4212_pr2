@@ -125,7 +125,7 @@ def gaussian(X, Y, means=np.array([0.0, 0.0]), variance=np.array([1.0, 1.0])):
 def two_city_model():
     h_optimal = 0.2
     k_optimal = 0.1
-    L, T = 10.0, 20.0
+    L, T = 20.0, 20.0
 
     domain_length = 2*abs(L)
     M = int(domain_length/h_optimal) + 2
@@ -136,30 +136,34 @@ def two_city_model():
     xs, ys = np.linspace(-L, L, M), np.linspace(-L, L, M)
     X, Y = np.meshgrid(xs, ys)
 
-    city_1 = np.array([-L/2, 0.0])
-    city_2 = np.array([L/2, 0.0])
-    variance = np.array([1.0, 1.0])*(L/4)
+    city_1 = np.array([-7, 0.0])
+    city_2 = np.array([7, 0.0])
+    std_dev = 1.5
+    variance = np.array([1.0, 1.0])*std_dev**2
 
     S_init = np.ones((M, M))*0.0
-    S_init += 1.0*gaussian(X, Y, means=city_1, variance=variance)
-    S_init += 1.0*gaussian(X, Y, means=city_2, variance=variance)
+    S_init += 10.0*gaussian(X, Y, means=city_1, variance=variance)
+    S_init += 10.0*gaussian(X, Y, means=city_2, variance=variance)
 
     peak_height = np.max(S_init)
-    I_init = np.ones((M, M))*0.0
+    # I_init = np.ones((M, M))*0.0
 
     # Outbreak centered at city 2:
-    I_init[(-1.0 + city_2[0] < X) & (X < city_2[0] + 1.0) & (-1.0 + city_2[1] < Y) & (Y < city_2[1] + 1.0)] = 0.4*peak_height
-    S_init[(-1.0 + city_2[0] < X) & (X < city_2[0] + 1.0) & (-1.0 + city_2[1] < Y) & (Y < city_2[1] + 1.0)] -= 0.4*peak_height
+    oubreak_center = city_2
+    I_init = 0.5*gaussian(X, Y, means=city_2, variance=np.array([1.0, 1.0]))
+    S_init -= I_init
 
-    beta = 2.0/peak_height
-    model = SIModel(S_init, I_init, mu_S_I=(0.1, 0.5), beta=beta, gamma=0.2, domain=(X, Y), N=N, T=T, store=False)
-    print(f"beta: {beta}\n")
+    beta = 10.0/peak_height
+    gamma = 0.1*beta  # /peak_height
+    model = SIModel(S_init, I_init, mu_S_I=(0.1, 0.5), beta=beta, gamma=gamma, domain=(X, Y), N=N, T=T, store=False)
+    print(f"beta: {beta}")
+    print(f"gamma: {gamma}\n")
 
-    init_view = {'elev': 30, 'azim': 90}
-    z_limits = np.array([0.0, 1.1*peak_height])
-    animate_model = SIAnimation(model, zlim=z_limits, azim_rotation=0.5, initial_view=init_view)
+    init_view = {'elev': 20, 'azim': 90}
+    z_limits = (np.array([0.0, 1.1*peak_height]), np.array([0.0, 1.1*np.max(I_init)]))
+    animate_model = SIAnimation(model, zlims=z_limits, azim_rotation=0.5, initial_view=init_view)
 
-    filename = f"two_cities_one_city_outbreak_L{int(L)}_T{int(T)}_beta{int(beta)}_1"
+    filename = f"two_cities_one_city_outbreak_L{int(L)}_T{int(T)}_beta{int(beta)}_gamma{int(gamma)}_var{int(std_dev**2)}"
     last_frame = animate_model.play_animation(save=True, filename=filename, as_gif=True)
     np.save("lastframes//" + filename + "_last_frames.npz", last_frame)
     print("Done displaying/saving the animation!")
@@ -189,9 +193,9 @@ def single_source_model():
 
     model = SIModel(S_init, I_init, mu_S_I=(0.1, 0.2), beta=1.5, gamma=0.5, domain=(X, Y), N=N, T=T, store=False)
 
-    z_limits = np.array([0.0, 1.1])
+    z_limits = (np.array([0.0, 1.1]), np.array([0.0, 1.1]))
     init_view = {'elev': 15, 'azim': 0}
-    animate_model = SIAnimation(model, zlim=z_limits, azim_rotation=0.5, initial_view=init_view)
+    animate_model = SIAnimation(model, zlims=z_limits, azim_rotation=0.5, initial_view=init_view)
     filename = f"single_source_L{int(L)}_T{int(T)}_2"
 
     last_frame = animate_model.play_animation(save=True, filename=filename, as_gif=True)
